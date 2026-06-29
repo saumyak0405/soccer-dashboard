@@ -897,6 +897,8 @@ export default function App() {
                   showTrails={showTrails}
                   selectedPlayer={selectedPlayer}
                   onSelectPlayer={(id)=>setSelectedPlayer(p=>p===id?null:id)}
+                  poseMap={poseMap}
+                  showSkeleton={showPose}
                 />
               </Suspense>
             ) : (
