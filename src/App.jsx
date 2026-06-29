@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
+const PitchCanvas3D = lazy(() => import("./PitchCanvas3D"));
 
 // ─── Design tokens ──────────────────────────────────────────────────────────
 const T = {
@@ -747,6 +748,7 @@ export default function App() {
   const [showPose,       setShowPose]       = useState(true);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [usingDemo,      setUsingDemo]      = useState(false);
+  const [view3D,         setView3D]         = useState(false);
   const animRef = useRef(null);
 
   const playerStats = useMemo(()=>allRows?buildPlayerStats(allRows):null,[allRows]);
@@ -848,6 +850,17 @@ export default function App() {
             </button>
           ))}
 
+          {/* 2D / 3D toggle */}
+          <button onClick={()=>setView3D(v=>!v)} style={{
+            background: view3D ? `${T.accent}22` : T.surface,
+            border:`1px solid ${view3D ? T.accent : T.border}`,
+            borderRadius:6, color: view3D ? T.accent : T.textSec,
+            padding:"5px 10px", cursor:"pointer", fontSize:11,
+            fontFamily:"inherit", fontWeight: view3D ? 700 : 400,
+          }}>
+            {view3D ? "🌐 3D" : "⬜ 2D"}
+          </button>
+
           {/* Load tracking CSV */}
           <label style={{background:T.panel,border:`1px solid ${T.border}`,borderRadius:6,
             padding:"5px 10px",fontSize:11,cursor:"pointer",color:T.accent,fontFamily:"inherit"}}>
@@ -871,14 +884,30 @@ export default function App() {
       <div style={{flex:1,display:"grid",gridTemplateColumns:"1fr 220px",gap:0,overflow:"hidden"}}>
         {/* Left: pitch + timeline */}
         <div style={{display:"flex",flexDirection:"column"}}>
-          <div style={{flex:1,background:T.bg,borderRight:`1px solid ${T.border}`}}>
-            <PitchCanvas
-              frameMap={frameMap} frames={frames} currentIdx={currentIdx}
-              playerStats={playerStats} allRows={allRows}
-              showHeatmap={showHeatmap} showTrails={showTrails} showPose={showPose}
-              heatmaps={heatmaps} poseMap={poseMap}
-              selectedPlayer={selectedPlayer} onSelectPlayer={setSelectedPlayer}
-            />
+          <div style={{flex:1,background:T.bg,borderRight:`1px solid ${T.border}`,position:"relative"}}>
+            {view3D ? (
+              <Suspense fallback={
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",
+                  height:"100%",color:T.textDim,fontSize:12}}>
+                  Loading 3D scene...
+                </div>
+              }>
+                <PitchCanvas3D
+                  frameMap={frameMap} frames={frames} currentIdx={currentIdx}
+                  showTrails={showTrails}
+                  selectedPlayer={selectedPlayer}
+                  onSelectPlayer={(id)=>setSelectedPlayer(p=>p===id?null:id)}
+                />
+              </Suspense>
+            ) : (
+              <PitchCanvas
+                frameMap={frameMap} frames={frames} currentIdx={currentIdx}
+                playerStats={playerStats} allRows={allRows}
+                showHeatmap={showHeatmap} showTrails={showTrails} showPose={showPose}
+                heatmaps={heatmaps} poseMap={poseMap}
+                selectedPlayer={selectedPlayer} onSelectPlayer={setSelectedPlayer}
+              />
+            )}
           </div>
           <div style={{borderTop:`1px solid ${T.border}`,borderRight:`1px solid ${T.border}`,
                        background:T.surface}}>
