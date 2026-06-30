@@ -22,6 +22,15 @@ const PITCH_W = 105;
 const PITCH_H = 68;
 const FPS = 25;
 
+// Discard impossible single-frame jumps / unrealistic speeds instead of
+// summing/displaying them as real movement. Without this, homography
+// glitches (camera pans causing the pitch mapping to jump briefly) get
+// counted as the player teleporting at 200-600km/h, inflating distance
+// totals by 50%+ and showing absurd "top speed" values.
+const MAX_REALISTIC_SPEED_KMH = 38;   // ~fastest recorded football sprints
+const MAX_STEP_DIST_M         = 0.45; // 38km/h ÷ 3.6 ÷ 25fps ≈ 0.42m, +margin
+const MIN_FRAMES_REAL_PLAYER  = 100;  // below this = ByteTrack ID-switch ghost
+
 // ─── Skeleton connections (pairs of joint names) ─────────────────────────────
 const SKEL = [
   ["left_shoulder",  "right_shoulder"],
@@ -101,10 +110,39 @@ function groupByFrame(rows) {
   return map;
 }
 
+// ─── Ghost track filtering ────────────────────────────────────────────────────
+// Removes tracker_ids that only appear for a handful of frames. These are
+// almost always ByteTrack ID switches (a real player briefly loses tracking
+// and gets re-assigned a new ID) or false detections, not real distinct
+// players — and they pollute "top distance" / "top speed" rankings if left in.
+function filterGhostTracks(allRows, minFrames = MIN_FRAMES_REAL_PLAYER) {
+  const frameCounts = new Map();
+  for (const r of allRows) {
+    frameCounts.set(r.tracker_id, (frameCounts.get(r.tracker_id) || 0) + 1);
+  }
+  const ghostIds = new Set();
+  for (const [id, count] of frameCounts) {
+    if (count < minFrames) ghostIds.add(id);
+  }
+  if (ghostIds.size > 0 && typeof console !== "undefined") {
+    console.log(
+      `[Cleaning] Dropped ${ghostIds.size} ghost tracker_id(s) with <${minFrames} frames:`,
+      [...ghostIds]
+    );
+  }
+  return allRows.filter(r => !ghostIds.has(r.tracker_id));
+}
+
 // ─── Player stats ────────────────────────────────────────────────────────────
-function buildPlayerStats(allRows) {
+function buildPlayerStats(allRowsRaw) {
+  // Step 1: remove ID-switch ghost tracks before computing anything
+  const allRows = filterGhostTracks(allRowsRaw);
+
   const stats   = new Map();
   const prevPos = new Map();
+  let glitchCount = 0;
+  let glitchDistTotal = 0;
+
   for (const r of [...allRows].sort((a,b) => a.frame - b.frame)) {
     if (!stats.has(r.tracker_id)) {
       stats.set(r.tracker_id, {
@@ -115,17 +153,40 @@ function buildPlayerStats(allRows) {
     }
     const s = stats.get(r.tracker_id);
     s.frames++;
-    if (r.speed_kmh > s.max_speed) s.max_speed = r.speed_kmh;
-    s.speed_sum += r.speed_kmh; s.speed_n++;
+
+    // Speed: discard unrealistic readings instead of using them raw —
+    // a glitch frame's speed_kmh would otherwise still count toward
+    // max_speed / avg_speed even though the underlying movement was fake.
+    const speedValid = r.speed_kmh > 0 && r.speed_kmh <= MAX_REALISTIC_SPEED_KMH;
+    if (speedValid) {
+      if (r.speed_kmh > s.max_speed) s.max_speed = r.speed_kmh;
+      s.speed_sum += r.speed_kmh; s.speed_n++;
+    }
+
+    // Distance: discard glitch jumps instead of summing them as real movement
     const prev = prevPos.get(r.tracker_id);
-    if (prev && prev.frame === r.frame - 1)
-      s.distance_m += Math.hypot(r.field_x_m - prev.x, r.field_y_m - prev.y);
+    if (prev && prev.frame === r.frame - 1) {
+      const stepDist = Math.hypot(r.field_x_m - prev.x, r.field_y_m - prev.y);
+      if (stepDist <= MAX_STEP_DIST_M) {
+        s.distance_m += stepDist;
+      } else {
+        glitchCount++;
+        glitchDistTotal += stepDist;
+      }
+    }
     prevPos.set(r.tracker_id, { frame: r.frame, x: r.field_x_m, y: r.field_y_m });
     if (r.field_x_m < s.minX) s.minX = r.field_x_m;
     if (r.field_x_m > s.maxX) s.maxX = r.field_x_m;
     if (r.field_y_m < s.minY) s.minY = r.field_y_m;
     if (r.field_y_m > s.maxY) s.maxY = r.field_y_m;
   }
+
+  if (glitchCount > 0 && typeof console !== "undefined") {
+    console.log(
+      `[Distance] Discarded ${glitchCount} glitch jumps (${glitchDistTotal.toFixed(1)}m of tracking noise removed)`
+    );
+  }
+
   for (const [,s] of stats) {
     s.avg_speed   = s.speed_n > 0 ? +(s.speed_sum/s.speed_n).toFixed(1) : 0;
     s.distance_m  = +s.distance_m.toFixed(1);
@@ -427,7 +488,7 @@ function PitchCanvas({frameMap,frames,currentIdx,playerStats,
         ctx.beginPath();ctx.arc(cx,cy,r+4,0,Math.PI*2);
         ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.stroke();
       }
-      if (row.speed_kmh>22) {
+      if (row.speed_kmh>22 && row.speed_kmh<=MAX_REALISTIC_SPEED_KMH) {
         const intensity=Math.min((row.speed_kmh-22)/16,1);
         ctx.beginPath();ctx.arc(cx,cy,r+3,0,Math.PI*2);
         ctx.strokeStyle=`rgba(255,220,50,${(intensity*0.75).toFixed(2)})`;
@@ -601,7 +662,8 @@ function PlayerSidebar({playerStats,selectedPlayer,onSelectPlayer,frameMap,frame
         const live=liveMap.get(s.tracker_id);
         const isSel=selectedPlayer===s.tracker_id;
         const col=TEAM_COLORS[s.team_id]||"#aaa";
-        const spd=live?.speed_kmh||0;
+        const rawSpd=live?.speed_kmh||0;
+        const spd=rawSpd<=MAX_REALISTIC_SPEED_KMH ? rawSpd : 0;
         const frame=frames?.[currentIdx];
         const hasPose=frame&&poseMap?.has(`${frame}_${s.tracker_id}`);
         return (
