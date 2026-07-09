@@ -472,7 +472,7 @@ function PitchCanvas({frameMap,frames,currentIdx,playerStats,
       const r=9;
 
       // Draw skeleton behind dot if pose available and showPose on
-      if (showPose&&poseMap&&!isRef) {
+      if (showPose&&poseMap&&!isRef&&selectedMode==="FULL") {
         const key=`${frame}_${row.tracker_id}`;
         const joints=poseMap.get(key);
         if (joints) drawSkeleton(ctx,cx,cy,joints,col,20);
@@ -813,6 +813,14 @@ export default function App() {
   const [view3D,         setView3D]         = useState(false);
   const animRef = useRef(null);
 
+  // ── Mode selection (MACRO / PERFORMANCE / FULL) ──
+  const [selectedMode,   setSelectedMode]   = useState("PERFORMANCE");
+  const [uploadFile,     setUploadFile]     = useState(null);
+  const [uploadStatus,   setUploadStatus]   = useState("idle"); // idle | uploading | processing | done | error
+  const [jobId,          setJobId]          = useState(null);
+  const [jobProgress,    setJobProgress]    = useState(null);
+  const [showUploadPanel,setShowUploadPanel]= useState(false);
+
   const playerStats = useMemo(()=>allRows?buildPlayerStats(allRows):null,[allRows]);
   const heatmaps    = useMemo(()=>allRows?{0:buildHeatmap(allRows,0),1:buildHeatmap(allRows,1)}:null,[allRows]);
   const events      = useMemo(()=>allRows?buildSpeedEvents(allRows,28):[],[allRows]);
@@ -823,6 +831,47 @@ export default function App() {
     setAllRows(rows);setFrameMap(fm);setFrames(sorted);
     setCurrentIdx(0);setPlaying(false);
   },[]);
+
+  // ── Upload video to pipeline ──
+  const handleVideoUpload = useCallback(async () => {
+    if (!uploadFile) return;
+    setUploadStatus("uploading");
+    const fd = new FormData();
+    fd.append("file", uploadFile);
+    fd.append("tier", selectedMode);
+    fd.append("mode", selectedMode === "MACRO" ? "MACRO" : "RADAR");
+    try {
+      const res  = await fetch("/upload", { method: "POST", body: fd });
+      const data = await res.json();
+      setJobId(data.job_id);
+      setUploadStatus("processing");
+      // Poll for completion
+      const poll = setInterval(async () => {
+        const r2   = await fetch(`/status/${data.job_id}`);
+        const info = await r2.json();
+        setJobProgress(info);
+        if (info.status === "done" || info.status === "failed") {
+          clearInterval(poll);
+          setUploadStatus(info.status === "done" ? "done" : "error");
+          // Auto-load CSV if available
+          if (info.status === "done" && info.artifacts?.csv) {
+            const csvRes  = await fetch(`/download/${data.job_id}/tracking.csv`);
+            const csvText = await csvRes.text();
+            setUsingDemo(false);
+            loadRows(parseTrackingCSV(csvText));
+            // Auto-load pose if FULL mode
+            if (selectedMode === "FULL" && info.artifacts?.pose) {
+              const poseRes  = await fetch(`/download/${data.job_id}/pose.csv`);
+              const poseText = await poseRes.text();
+              setPoseMap(parsePoseCSV(poseText));
+            }
+          }
+        }
+      }, 3000);
+    } catch(err) {
+      setUploadStatus("error");
+    }
+  }, [uploadFile, selectedMode, loadRows]);
 
   // Load demo on mount
   useEffect(()=>{
@@ -887,23 +936,37 @@ export default function App() {
           <div>
             <div style={{fontWeight:800,fontSize:13,letterSpacing:0.8,color:T.textPri}}>
               TACTICAL REPLAY
+              <span style={{marginLeft:8,fontSize:9,padding:"2px 7px",borderRadius:4,fontWeight:600,
+                background:selectedMode==="MACRO"?"#1baf7a22":selectedMode==="PERFORMANCE"?"#3D8EF022":"#7F77DD22",
+                color:selectedMode==="MACRO"?"#1baf7a":selectedMode==="PERFORMANCE"?T.accent:"#7F77DD",
+                border:`1px solid ${selectedMode==="MACRO"?"#1baf7a33":selectedMode==="PERFORMANCE"?T.accent+"33":"#7F77DD33"}`
+              }}>{selectedMode}</span>
             </div>
             <div style={{fontSize:10,color:T.textDim,letterSpacing:0.5}}>
               {usingDemo
-                ? "Demo · load tracking.csv for real data"
+                ? "Demo · upload match clip or load tracking.csv"
                 : `${frames.length} frames · ${allRows?.length||0} detections · ${poseLoaded?`${poseMap.size} pose rows`:"no pose loaded"}`}
             </div>
           </div>
         </div>
 
         <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+          {/* Upload video button */}
+          <button onClick={()=>setShowUploadPanel(v=>!v)} style={{
+            background:showUploadPanel?`${T.accent}22`:T.panel,
+            border:`1px solid ${showUploadPanel?T.accent:T.border}`,
+            borderRadius:6,color:showUploadPanel?T.accent:T.textPri,
+            padding:"5px 12px",cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:700}}>
+            🎬 Analyze Match
+          </button>
+
           {/* Toggle buttons */}
           {[
             ["🔥 Heatmap", showHeatmap, ()=>setShowHeatmap(v=>!v)],
             ["〰 Trails",  showTrails,  ()=>setShowTrails(v=>!v)],
-            ["🦴 Pose",    showPose,    ()=>setShowPose(v=>!v)],
-          ].map(([lbl,active,fn])=>(
-            <button key={lbl} onClick={fn} style={{
+            ["🦴 Pose",    showPose,    ()=>setShowPose(v=>!v), selectedMode!=="FULL"],
+          ].map(([lbl,active,fn,disabled])=>(
+            !disabled && <button key={lbl} onClick={fn} style={{
               background:active?`${T.accent}22`:T.surface,
               border:`1px solid ${active?T.accent:T.border}`,
               borderRadius:6,color:active?T.accent:T.textSec,
@@ -930,17 +993,105 @@ export default function App() {
             <input type="file" accept=".csv" onChange={handleTrackingFile} style={{display:"none"}}/>
           </label>
 
-          {/* Load pose CSV */}
-          <label style={{
+          {/* Load pose CSV — only show for FULL mode */}
+          {selectedMode==="FULL" && <label style={{
             background:poseLoaded?`${T.accent}22`:T.panel,
             border:`1px solid ${poseLoaded?T.accent:T.border}`,
             borderRadius:6,padding:"5px 10px",fontSize:11,cursor:"pointer",
             color:poseLoaded?T.accent:T.textSec,fontFamily:"inherit"}}>
             🦴 pose.csv
             <input type="file" accept=".csv" onChange={handlePoseFile} style={{display:"none"}}/>
-          </label>
+          </label>}
         </div>
       </div>
+
+      {/* Upload Panel */}
+      {showUploadPanel && (
+        <div style={{background:T.panel,borderBottom:`1px solid ${T.border}`,padding:"16px 20px"}}>
+          {/* Mode selector */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
+            {[
+              {key:"MACRO",       label:"Tactical overview",  time:"~3 min GPU",
+               desc:"Formations · Heatmaps · Defensive lines",
+               color:"#1baf7a", features:["Team heatmaps","Formation detection","Defensive line","Press map"]},
+              {key:"PERFORMANCE", label:"Performance analysis",time:"~10 min GPU",
+               desc:"Speed · Distance · Per-player CSV",
+               color:T.accent, features:["Everything in Tactical","Per-player CSV","Speed & distance","Re-ID tracking"]},
+              {key:"FULL",        label:"Full analysis",       time:"~35 min CPU",
+               desc:"Everything + Pose estimation",
+               color:"#7F77DD", features:["Everything in Performance","Pose estimation","Reliability report","Pose CSV export"]},
+            ].map(m=>(
+              <div key={m.key} onClick={()=>setSelectedMode(m.key)} style={{
+                border:`2px solid ${selectedMode===m.key?m.color:T.border}`,
+                borderRadius:10,padding:"12px 14px",cursor:"pointer",
+                background:selectedMode===m.key?`${m.color}11`:T.surface,
+                transition:"all 0.15s"
+              }}>
+                <div style={{fontWeight:700,fontSize:12,color:selectedMode===m.key?m.color:T.textPri,marginBottom:3}}>{m.label}</div>
+                <div style={{fontSize:10,color:T.textSec,marginBottom:8}}>{m.desc}</div>
+                <div style={{fontSize:9,padding:"2px 6px",borderRadius:4,display:"inline-block",
+                  background:selectedMode===m.key?`${m.color}22`:T.border,
+                  color:selectedMode===m.key?m.color:T.textDim,marginBottom:8}}>{m.time}</div>
+                <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                  {m.features.map(f=>(
+                    <div key={f} style={{fontSize:9,color:T.textSec,display:"flex",alignItems:"center",gap:4}}>
+                      <span style={{color:m.color,fontSize:8}}>✓</span>{f}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* File upload */}
+          <div style={{display:"flex",gap:10,alignItems:"center"}}>
+            <label style={{flex:1,background:T.surface,border:`1px dashed ${T.border}`,borderRadius:8,
+              padding:"10px 14px",cursor:"pointer",textAlign:"center",
+              color:uploadFile?T.textPri:T.textDim,fontSize:11,fontFamily:"inherit"}}>
+              {uploadFile ? `📹 ${uploadFile.name}` : "📹 Click to select match video (.mp4)"}
+              <input type="file" accept="video/mp4,video/*" onChange={e=>setUploadFile(e.target.files[0])}
+                style={{display:"none"}}/>
+            </label>
+            <button onClick={handleVideoUpload}
+              disabled={!uploadFile||uploadStatus==="uploading"||uploadStatus==="processing"}
+              style={{background:uploadFile?T.accent:"#1E2733",border:"none",
+                borderRadius:8,color:"#fff",padding:"10px 20px",cursor:uploadFile?"pointer":"not-allowed",
+                fontSize:12,fontWeight:700,fontFamily:"inherit",opacity:uploadFile?1:0.5,
+                whiteSpace:"nowrap"}}>
+              {uploadStatus==="uploading"?"Uploading...":
+               uploadStatus==="processing"?"Processing...":
+               uploadStatus==="done"?"✅ Done — reload":"Analyze Match ↗"}
+            </button>
+          </div>
+
+          {/* Status */}
+          {uploadStatus==="processing" && (
+            <div style={{marginTop:10,fontSize:11,color:T.textSec,display:"flex",alignItems:"center",gap:8}}>
+              <div style={{width:8,height:8,borderRadius:"50%",background:T.accent,
+                animation:"pulse 1.5s infinite"}}/>
+              Processing with {selectedMode} mode · Job: {jobId?.slice(0,8)}...
+              {jobProgress?.status && ` · ${jobProgress.status}`}
+            </div>
+          )}
+          {uploadStatus==="done" && (
+            <div style={{marginTop:10,display:"flex",gap:8,flexWrap:"wrap"}}>
+              {jobId && ["tracking.csv","heatmap.png",selectedMode==="FULL"?"pose.csv":null,
+                         "output.mp4"].filter(Boolean).map(f=>(
+                <a key={f} href={`/download/${jobId}/${f}`} download style={{
+                  fontSize:10,padding:"4px 10px",borderRadius:5,textDecoration:"none",
+                  background:`${T.accent}22`,color:T.accent,border:`1px solid ${T.accent}44`}}>
+                  ↓ {f}
+                </a>
+              ))}
+            </div>
+          )}
+          {uploadStatus==="error" && (
+            <div style={{marginTop:10,fontSize:11,color:"#F59E0B"}}>
+              ⚠️ Processing failed. Check server logs or try again.
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Main layout */}
       <div style={{flex:1,display:"grid",gridTemplateColumns:"1fr 220px",gap:0,overflow:"hidden"}}>
