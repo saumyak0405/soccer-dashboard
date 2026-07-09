@@ -472,7 +472,7 @@ function PitchCanvas({frameMap,frames,currentIdx,playerStats,
       const r=9;
 
       // Draw skeleton behind dot if pose available and showPose on
-      if (showPose&&poseMap&&!isRef&&selectedMode==="FULL") {
+      if (showPose&&poseMap&&!isRef) {
         const key=`${frame}_${row.tracker_id}`;
         const joints=poseMap.get(key);
         if (joints) drawSkeleton(ctx,cx,cy,joints,col,20);
