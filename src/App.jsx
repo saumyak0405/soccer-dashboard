@@ -847,7 +847,7 @@ export default function App() {
       setUploadStatus("processing");
       // Poll for completion
       const poll = setInterval(async () => {
-        const r2   = await fetch(`/status/${data.job_id}`);
+        const r2   = await fetch(`https://footballpipeline.zeabur.app/jobs/${data.job_id}`);
         const info = await r2.json();
         setJobProgress(info);
         if (info.status === "done" || info.status === "failed") {
@@ -855,13 +855,13 @@ export default function App() {
           setUploadStatus(info.status === "done" ? "done" : "error");
           // Auto-load CSV if available
           if (info.status === "done" && info.artifacts?.csv) {
-            const csvRes  = await fetch(`/download/${data.job_id}/tracking.csv`);
+            const csvRes  = await fetch(`https://footballpipeline.zeabur.app/jobs/${data.job_id}/download/csv`);
             const csvText = await csvRes.text();
             setUsingDemo(false);
             loadRows(parseTrackingCSV(csvText));
             // Auto-load pose if FULL mode
             if (selectedMode === "FULL" && info.artifacts?.pose) {
-              const poseRes  = await fetch(`/download/${data.job_id}/pose.csv`);
+              const poseRes  = await fetch(`https://footballpipeline.zeabur.app/jobs/${data.job_id}/download/pose`);
               const poseText = await poseRes.text();
               setPoseMap(parsePoseCSV(poseText));
             }
