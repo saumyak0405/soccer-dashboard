@@ -841,7 +841,7 @@ export default function App() {
     fd.append("tier", selectedMode);
     fd.append("mode", selectedMode === "MACRO" ? "MACRO" : "RADAR");
     try {
-      const res  = await fetch("/upload", { method: "POST", body: fd });
+      const res = await fetch("https://your-pipeline-url.zeabur.app/jobs", { method: "POST", body: fd });
       const data = await res.json();
       setJobId(data.job_id);
       setUploadStatus("processing");
