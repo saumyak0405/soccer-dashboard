@@ -29,7 +29,7 @@ const FPS = 25;
 // totals by 50%+ and showing absurd "top speed" values.
 const MAX_REALISTIC_SPEED_KMH = 38;   // ~fastest recorded football sprints
 const MAX_STEP_DIST_M         = 2; 
-const MIN_FRAMES_REAL_PLAYER  = 5;  
+const MIN_FRAMES_REAL_PLAYER  = 50;  
 
 // ─── Skeleton connections (pairs of joint names) ─────────────────────────────
 const SKEL = [
