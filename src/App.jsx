@@ -28,8 +28,8 @@ const FPS = 25;
 // counted as the player teleporting at 200-600km/h, inflating distance
 // totals by 50%+ and showing absurd "top speed" values.
 const MAX_REALISTIC_SPEED_KMH = 38;   // ~fastest recorded football sprints
-const MAX_STEP_DIST_M         = 0.45; // 38km/h ÷ 3.6 ÷ 25fps ≈ 0.42m, +margin
-const MIN_FRAMES_REAL_PLAYER  = 100;  // below this = ByteTrack ID-switch ghost
+const MAX_STEP_DIST_M         = 0.8; 
+const MIN_FRAMES_REAL_PLAYER  = 15;  
 
 // ─── Skeleton connections (pairs of joint names) ─────────────────────────────
 const SKEL = [
@@ -435,7 +435,7 @@ function PitchCanvas({frameMap,frames,currentIdx,playerStats,
 
     // Trails
     if (showTrails) {
-      const trailLen=28;
+      const trailLen=12;
       const trailMap=new Map();
       const sf=[...frameMap.keys()].sort((a,b)=>a-b);
       for (let i=Math.max(0,currentIdx-trailLen);i<=currentIdx;i++) {
@@ -885,7 +885,7 @@ export default function App() {
   useEffect(()=>{
     if (!playing) return;
     let last=0;
-    const ms=1000/(FPS*speed);
+    const ms=Math.round(1000/FPS)/speed;
     const tick=(ts)=>{
       if (ts-last>=ms){
         last=ts;
