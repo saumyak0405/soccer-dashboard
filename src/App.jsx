@@ -435,7 +435,7 @@ function PitchCanvas({frameMap,frames,currentIdx,playerStats,
 
     // Trails
     if (showTrails) {
-      const trailLen=12;
+      const trailLen=6;
       const trailMap=new Map();
       const sf=[...frameMap.keys()].sort((a,b)=>a-b);
       for (let i=Math.max(0,currentIdx-trailLen);i<=currentIdx;i++) {
